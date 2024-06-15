@@ -1,0 +1,97 @@
+trigger:
+  - "none"
+
+variables:
+  buildConfiguration: "Release"
+  releaseBranchName: "release"
+  dotnetSdkVersion: "6.x"
+  projects: "**/*.csproj"
+  projectName: "customer.api"
+  poolName: "Default"
+  iisServerName: "Server Name"
+  iisWebsiteName: "customer.api"
+
+pool:
+  vmImage: "ubuntu-22.04"
+  name: $(poolName)
+  
+stages:
+  - stage: "Build"
+    displayName: "Build the web application"
+    jobs:
+      - job: "Build"
+        displayName: "Build job"
+
+        steps:
+          - task: UseDotNet@2
+            displayName: "Use .NET SDK $(dotnetSdkVersion)"
+            inputs:
+              version: "$(dotnetSdkVersion)"
+
+          - task: DotNetCoreCLI@2
+            displayName: "Restore project dependencies"
+            inputs:
+              command: "restore"
+              projects: "$(projects)"
+
+          - task: DotNetCoreCLI@2
+            displayName: "Build the project - $(buildConfiguration)"
+            inputs:
+              command: "build"
+              arguments: "--no-restore --configuration $(buildConfiguration)"
+              projects: "$(projects)"
+
+          - task: DotNetCoreCLI@2
+            displayName: "Publish the project - $(buildConfiguration)"
+            inputs:
+              command: "publish"
+              projects: "$(projects)"
+              publishWebProjects: false
+              arguments: "--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)"
+              zipAfterPublish: true
+
+          - publish: "$(Build.ArtifactStagingDirectory)"
+            artifact: "$(projectName)"
+  - stage: "Deploy"
+    displayName: "Deploy job"
+    dependsOn: "Build"
+    jobs:
+      - deployment: Dev
+        displayName: Dev Deployment
+        environment:
+          name: "$(iisServerName)"
+          resourceType: VirtualMachine
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              - task: DownloadPipelineArtifact@2
+                displayName: "Download build artifacts"
+                inputs:
+                  artifact: "$(projectName)"
+                  path: "$(Pipeline.Workspace)/$(projectName)"
+
+              - task: IISWebAppManagementOnMachineGroup@0
+                name: "StopIIS"
+                displayName: "Stop IIS website"
+                inputs:
+                  IISDeploymentType: "IISWebsite"
+                  ActionIISWebsite: "StopWebsite"
+                  StartStopWebsiteName: "$(iisWebsiteName)"
+                  
+              - task: IISWebAppDeploymentOnMachineGroup@0
+                name: "DeployIIS"
+                displayName: "Deploy IIS website"
+                inputs:
+                  Package: '$(Pipeline.Workspace)\$(projectName)\Release\$(projectName).zip'
+                  WebSiteName: "$(iisWebsiteName)"
+                  TakeAppOfflineFlag: true
+
+              - task: IISWebAppManagementOnMachineGroup@0
+                name: "StartIIS"
+                displayName: "Start IIS website"
+                inputs:
+                  IISDeploymentType: "IISWebsite"
+                  ActionIISWebsite: "StartWebsite"
+                  StartStopWebsiteName: "$(iisWebsiteName)"
